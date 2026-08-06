@@ -1,14 +1,13 @@
 import json
 import re
-
 import httpx
 import openai
 from openai import AsyncOpenAI
-
 import config
+from dotenv import load_dotenv
+import os
 
-AI_SUMMARY_PROMPT = """"I would like you to help me by summarizing a group of tweets, delimited by triple backticks, and each tweet is labeled by a number in a given format: number-[tweet]. Give me a comprehensive summary in a concise paragraph and as you generate each sentence, provide the identifying number of tweets on which that sentence is based:"""
-
+AI_SUMMARY_PROMPT = """I would like you to help me by summarizing a group of tweets, delimited by triple backticks, and each tweet is labeled by a number in a given format: number-[tweet]. Give me a comprehensive summary in a concise paragraph and as you generate each sentence, provide the identifying number of tweets on which that sentence is based:"""
 
 class BackendError(Exception):
     """An LLM backend is unreachable or returned an unusable response."""
@@ -18,48 +17,26 @@ class BackendError(Exception):
         self.url = url
         super().__init__(f"{backend} backend at {url}: {message}")
 
-
 _summarizer_client = None
 _stance_client = None
-
-
-def _get_summarizer_client():
-    global _summarizer_client
-    if _summarizer_client is None:
-        _summarizer_client = openai.OpenAI(
-            base_url=config.SUMMARIZER_BASE_URL,
-            api_key=config.LLM_API_KEY,
-            timeout=config.SUMMARY_TIMEOUT_S,
-            max_retries=1,
-        )
-    return _summarizer_client
-
-
-def _get_stance_client():
-    global _stance_client
-    if _stance_client is None:
-        _stance_client = AsyncOpenAI(
-            base_url=config.STANCE_BASE_URL,
-            api_key=config.LLM_API_KEY,
-            timeout=config.STANCE_TIMEOUT_S,
-            max_retries=1,
-        )
-    return _stance_client
-
 
 def check_backends():
     """Ping both vLLM servers. Returns {"summarizer": bool, "stance": bool}; never raises."""
     status = {}
+
+    headers = {
+        "accept": "application/json",
+        "Authorization": f"Bearer {os.getenv('USAI_API_KEY')}",
+        "Content-Type": "application/json",
+    }
+
     for name, base_url in (
-        ("summarizer", config.SUMMARIZER_BASE_URL),
-        ("stance", config.STANCE_BASE_URL),
+        ("summarizer", "https://api.doc.usai.gov/api/v1/models"),
+        ("stance", "https://api.doc.usai.gov/api/v1/models"),
     ):
         try:
-            resp = httpx.get(
-                base_url.rstrip("/") + "/models",
-                headers={"Authorization": f"Bearer {config.LLM_API_KEY}"},
-                timeout=5.0,
-            )
+            resp = httpx.get(url=base_url,
+                             headers=headers)
             status[name] = resp.status_code == 200
         except httpx.HTTPError:
             status[name] = False
@@ -67,28 +44,28 @@ def check_backends():
 
 
 def ai_summarize(tweets):
-    llama3_gen_prompt = """system
+    headers = {
+        "accept": "application/json",
+        "Authorization": f"Bearer {os.getenv('USAI_API_KEY')}",
+        "Content-Type": "application/json",
+    }
 
-{}user
+    payload = {
+        "model": config.SUMMARIZER_MODEL,
+        "messages": [
+            {"role": "system", "content": AI_SUMMARY_PROMPT},
+            {"role": "user", "content": tweets}
+        ]
+    }
 
-{}assistant {}"""
-    input_text = llama3_gen_prompt.format(
-        AI_SUMMARY_PROMPT,
-        tweets,
-        ""
-    )
-    client = _get_summarizer_client()
-    try:
-        completion = client.chat.completions.create(
-            model=config.SUMMARIZER_MODEL,
-            messages=[{"role": "user", "content": input_text}],
-            temperature=0,
-        )
-    except openai.OpenAIError as e:
-        raise BackendError("summarizer", config.SUMMARIZER_BASE_URL, str(e)) from e
-    content = completion.choices[0].message.content
-    if not content or not content.strip():
-        raise BackendError("summarizer", config.SUMMARIZER_BASE_URL, "empty response")
+    response = httpx.post(url=config.SUMMARIZER_BASE_URL,
+                            headers=headers,
+                            json=payload,
+                            timeout=None)
+    response.raise_for_status()
+
+    content = response.json()["choices"][0]["message"]["content"]
+
     return content
 
 
