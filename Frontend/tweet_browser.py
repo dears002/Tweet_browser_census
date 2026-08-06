@@ -22,17 +22,58 @@ from sentence_transformers import SentenceTransformer
 from transformers import AutoTokenizer
 import pickle
 import datetime
-
+from dotenv import load_dotenv
 import config
+import requests
+import os
+from tqdm import tqdm
 
-_embedding_model = None
+load_dotenv()
 
-def get_embedding_model():
-    global _embedding_model
-    if _embedding_model is None:
-        device = config.EMBEDDING_DEVICE or ("cuda" if torch.cuda.is_available() else "cpu")
-        _embedding_model = SentenceTransformer("BAAI/bge-base-en-v1.5", device=device)
-    return _embedding_model
+def get_embeddings(to_embed: str | list[str], input_type:str):
+    if not os.getenv("USAI_API_KEY"):
+        raise RuntimeError("USAI_API_KEY is not set")
+
+    headers = {
+        "accept": "application/json",
+        "Authorization": f"Bearer {os.getenv('USAI_API_KEY')}",
+        "Content-Type": "application/json",
+    }
+
+    if isinstance(to_embed, str):
+        to_embed = [to_embed]
+    elif not isinstance(to_embed, list):
+        raise TypeError("Input to get_embeddings must be a string or a list of strings.")
+
+    BATCH_SIZE = 96
+
+    all_embeddings = []
+        
+    for start in tqdm(range(0, len(to_embed), BATCH_SIZE)):
+        end = start + BATCH_SIZE
+
+        batch = to_embed[start:end]
+
+        payload = {
+            "encodingFormat": "float",
+            "input": batch,
+            "input_type": input_type,
+            "model": "cohere_english_v3",
+        }
+
+        response = requests.post(
+            "https://api.doc.usai.gov/api/v1/embeddings",
+            headers=headers,
+            json=payload,
+        )
+
+        response.raise_for_status()
+        
+        result = response.json()
+
+        all_embeddings.extend(item["embedding"] for item in result["data"])
+    
+    return all_embeddings
 
 def load_or_compute_embeddings(data, path):
     """Load precomputed embeddings if the file matches the dataset, else compute and save."""
@@ -46,15 +87,18 @@ def load_or_compute_embeddings(data, path):
             return torch.from_numpy(arr)
         if arr is not None:
             print(f"Embeddings file {path} has {arr.shape[0]} rows but dataset has {len(data)}; recomputing.")
-    embeddings = get_embedding_model().encode(
-        data["Message"].astype(str).tolist(),
-        convert_to_tensor=True,
-        show_progress_bar=False,
-        batch_size=128,
-        normalize_embeddings=True,
-    ).cpu()
+    
+    to_embed = data["Message"].astype(str).tolist()
+    
+    all_embeddings = get_embeddings(to_embed, input_type="clustering")
+
+    embeddings = np.array(all_embeddings)
+    embeddings = embeddings / np.linalg.norm(embeddings)
+    embeddings = torch.from_numpy(embeddings).float()
+
     if path:
         np.savetxt(path, embeddings.numpy(), delimiter=",")
+        print(f"Embeddings saved {path}.")
     return embeddings
 
 # this function reads in the data (copied from online)
@@ -157,7 +201,7 @@ class Session:
         self.weightable = dict()
         # self.summarizer = FastLexRankSummarizer()
         for i in range(len(self.allData.dtypes)):
-            if self.allData.dtypes[i] == int or self.allData.dtypes[i] == float:
+            if self.allData.dtypes.iloc[i] == int or self.allData.dtypes.iloc[i] == float:
                 self.weightable[headers[i]] = i
 
     def makeOperation(self, outputs, counts, funcName, params, switch = True, inputs: Subset = None):
@@ -504,7 +548,8 @@ class Session:
     def parseSummary(self, AISummary, inputSet: Subset = None):
         if inputSet == None or type(inputSet) != Subset:
             inputSet = self.currentSet
-        pattern = re.compile(r'\([\d,\s]+\)')
+        pattern = re.compile(r'\[\s*\d+(?:\s*,\s*\d+)*\s*\]')
+        # pattern = re.compile(r'\([\d,\s]+\)')
         sources = re.findall(pattern, AISummary)
         strings = re.split(pattern, AISummary)
         # strings = [re.sub(r'\s+([,\.])', r'\1', sentence) for sentence in strings]
@@ -542,9 +587,12 @@ class Session:
         if inputSet == None or type(inputSet) != Subset:
             inputSet = self.currentSet
 
-        query_embedding = get_embedding_model().encode(
-            query, convert_to_tensor=True, normalize_embeddings=True, show_progress_bar=False
-        )
+        all_embeddings = get_embeddings(to_embed=query, input_type="search_query")
+        query_embedding = all_embeddings[0]
+
+        query_embedding = np.array(query_embedding)
+        query_embedding = query_embedding / np.linalg.norm(query_embedding)
+        query_embedding = torch.from_numpy(query_embedding).float()
         
         # Convert indices to tensor and select embeddings
         indices_tensor = torch.tensor(np.asarray(inputSet.indices))
