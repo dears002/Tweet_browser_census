@@ -1,13 +1,10 @@
 import json
 import re
 import httpx
-import openai
-from openai import AsyncOpenAI
 import config
 from dotenv import load_dotenv
 import os
-
-AI_SUMMARY_PROMPT = """I would like you to help me by summarizing a group of tweets, delimited by triple backticks, and each tweet is labeled by a number in a given format: number-[tweet]. Give me a comprehensive summary in a concise paragraph and as you generate each sentence, provide the identifying number of tweets on which that sentence is based:"""
+from pathlib import Path
 
 class BackendError(Exception):
     """An LLM backend is unreachable or returned an unusable response."""
@@ -16,9 +13,6 @@ class BackendError(Exception):
         self.backend = backend
         self.url = url
         super().__init__(f"{backend} backend at {url}: {message}")
-
-_summarizer_client = None
-_stance_client = None
 
 def check_backends():
     """Ping both vLLM servers. Returns {"summarizer": bool, "stance": bool}; never raises."""
@@ -53,7 +47,7 @@ def ai_summarize(tweets):
     payload = {
         "model": config.SUMMARIZER_MODEL,
         "messages": [
-            {"role": "system", "content": AI_SUMMARY_PROMPT},
+            {"role": "system", "content": Path("../prompts/ai_summary_prompt.txt").read_text()},
             {"role": "user", "content": tweets}
         ]
     }
@@ -115,15 +109,23 @@ async def stance_annotation(tweets, topic, stances, examples):
     if len(examples) == 0:
         examplePrompt = ""
 
-    prompt = [
-        {
-            "role": "system",
-            "content": f"You are a human annotator. You will be presented with a list of tweets (labeled with id numbers), delimited by triple backticks, concerning '{topic}'. Please make the following assessment without further commentary:",
-        },
-        {
-            "role": "user",
-            "content": f"""
-    Determine whether each tweet discusses the topic of '{topic}'. If it does, indicate the stance of the Twitter user who posted the tweet as one of '{formattedStances}', otherwise label the stance as -1. Your response should be in JSON format as shown below, do not provide any other output:
+    AI_STANCE_PROMPT = f"""You are a human annotator. You will be presented with
+    a list of tweets (labeled with id numbers), delimited by triple backticks,
+    concerning '{topic}'. Please make the following assessment without further 
+    commentary:"""
+    
+    headers = {
+        "accept": "application/json",
+        "Authorization": f"Bearer {os.getenv('USAI_API_KEY')}",
+        "Content-Type": "application/json",
+    }
+
+    payload = {
+        "model": config.STANCE_MODEL,
+        #"model": "gpt-5.5-latest-guardrails-defaultv2",
+        "messages": [
+            {"role": "system", "content": AI_STANCE_PROMPT},
+            {"role": "user", "content": f"""Determine whether each tweet discusses the topic of '{topic}'. If it does, indicate the stance of the Twitter user who posted the tweet as one of '{formattedStances}', otherwise label the stance as -1. Your response should be in JSON format as shown below, do not provide any other output:
     {{
         "tweet-<tweetID>" : "stance_number"
     }}
@@ -134,19 +136,17 @@ async def stance_annotation(tweets, topic, stances, examples):
 
     ### Your Task:
     Tweets: ```{tweets}```
-    """,
-        },
-    ]
-    client = _get_stance_client()
-    request = {"model": config.STANCE_MODEL, "messages": prompt}
-    try:
-        try:
-            completion = await client.chat.completions.create(
-                **request, response_format={"type": "json_object"}
-            )
-        except openai.BadRequestError:
-            completion = await client.chat.completions.create(**request)
-    except openai.OpenAIError as e:
-        raise BackendError("stance", config.STANCE_BASE_URL, str(e)) from e
+    """}
+        ]
+    }
 
-    return completion.choices[0].message.content
+    response = httpx.post(url=config.STANCE_BASE_URL,
+                          #url="https://api.doc.usai.gov/api/v1/chat/completions",
+                          headers=headers,
+                          json=payload,
+                          timeout=None)
+    response.raise_for_status()
+
+    content = response.json()["choices"][0]["message"]["content"]
+
+    return content

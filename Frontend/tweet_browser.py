@@ -174,13 +174,14 @@ class Session:
             self.createSessionDump()
 
         if embeddings is None:
-            embeddings = get_embedding_model().encode(
-                data["Message"],
-                convert_to_tensor=True,
-                show_progress_bar=False,
-                batch_size=128,
-                normalize_embeddings=True,
-            )
+            # This needs to be updated with USAi syntax
+            # embeddings = get_embedding_model().encode(
+            #     data["Message"],
+            #     convert_to_tensor=True,
+            #     show_progress_bar=False,
+            #     batch_size=128,
+            #     normalize_embeddings=True,
+            # )
 
         self.embeddings = embeddings
         self.allData = data
