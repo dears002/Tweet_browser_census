@@ -174,6 +174,7 @@ class Session:
             self.createSessionDump()
 
         if embeddings is None:
+            pass
             # This needs to be updated with USAi syntax
             # embeddings = get_embedding_model().encode(
             #     data["Message"],

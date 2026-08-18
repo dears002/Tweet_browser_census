@@ -90,11 +90,12 @@ def parse_stance_response(text, start, end):
 
 async def stance_annotation(tweets, topic, stances, examples):
     formattedStances = []
+    validStanceNums = []
     examplePrompt = "### Examples: \ninput:\n"
     for i in range(len(stances)):
         if stances[i] != "":
-            currStanceNum = len(formattedStances)
-            formattedStances.append(f"{currStanceNum}: {stances[i]}")
+            formattedStances.append(f"{i}: {stances[i]}")
+            validStanceNums.append(i)
 
     exampleCount = 0
     for key in examples.keys():
@@ -113,7 +114,7 @@ async def stance_annotation(tweets, topic, stances, examples):
     a list of tweets (labeled with id numbers), delimited by triple backticks,
     concerning '{topic}'. Please make the following assessment without further 
     commentary:"""
-    
+
     headers = {
         "accept": "application/json",
         "Authorization": f"Bearer {os.getenv('USAI_API_KEY')}",
@@ -122,7 +123,6 @@ async def stance_annotation(tweets, topic, stances, examples):
 
     payload = {
         "model": config.STANCE_MODEL,
-        #"model": "gpt-5.5-latest-guardrails-defaultv2",
         "messages": [
             {"role": "system", "content": AI_STANCE_PROMPT},
             {"role": "user", "content": f"""Determine whether each tweet discusses the topic of '{topic}'. If it does, indicate the stance of the Twitter user who posted the tweet as one of '{formattedStances}', otherwise label the stance as -1. Your response should be in JSON format as shown below, do not provide any other output:
@@ -130,7 +130,7 @@ async def stance_annotation(tweets, topic, stances, examples):
         "tweet-<tweetID>" : "stance_number"
     }}
 
-    The stance number must be between -1 and {len(formattedStances)-1}, no other text should be in the stance number field.
+    The stance number must be one of {validStanceNums} or -1, no other text should be in the stance number field.
 
     {examplePrompt}
 
@@ -141,7 +141,6 @@ async def stance_annotation(tweets, topic, stances, examples):
     }
 
     response = httpx.post(url=config.STANCE_BASE_URL,
-                          #url="https://api.doc.usai.gov/api/v1/chat/completions",
                           headers=headers,
                           json=payload,
                           timeout=None)
