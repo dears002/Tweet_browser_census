@@ -76,7 +76,8 @@ def get_embeddings(to_embed: str | list[str], input_type:str):
     return all_embeddings
 
 def load_or_compute_embeddings(data, path):
-    """Load precomputed embeddings if the file matches the dataset, else compute and save."""
+    """Load precomputed embeddings if the file matches the dataset,
+    else compute and save."""
     if path and os.path.isfile(path):
         try:
             arr = pd.read_csv(path, header=None).to_numpy(dtype=np.float32)
@@ -90,10 +91,10 @@ def load_or_compute_embeddings(data, path):
     
     to_embed = data["Message"].astype(str).tolist()
     
-    all_embeddings = get_embeddings(to_embed, input_type="clustering")
+    all_embeddings = get_embeddings(to_embed, input_type="search_document")
 
     embeddings = np.array(all_embeddings)
-    embeddings = embeddings / np.linalg.norm(embeddings)
+    embeddings = embeddings / np.linalg.norm(embeddings, axis=1, keepdims=True)
     embeddings = torch.from_numpy(embeddings).float()
 
     if path:
