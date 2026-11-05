@@ -31,12 +31,13 @@ from tqdm import tqdm
 load_dotenv()
 
 def get_embeddings(to_embed: str | list[str], input_type:str):
-    if not os.getenv("USAI_API_KEY"):
-        raise RuntimeError("USAI_API_KEY is not set")
+    if not os.getenv("OPENAI_API_KEY"):
+        raise RuntimeError("OPENAI_API_KEY is not set")
 
     headers = {
         "accept": "application/json",
-        "Authorization": f"Bearer {os.getenv('USAI_API_KEY')}",
+        "Authorization": f"Bearer {os.getenv('OPENAI_API_KEY')}",
+        #"Authorization": f"Bearer {os.getenv('USAI_API_KEY')}",
         "Content-Type": "application/json",
     }
 
@@ -55,14 +56,17 @@ def get_embeddings(to_embed: str | list[str], input_type:str):
         batch = to_embed[start:end]
 
         payload = {
-            "encodingFormat": "float",
+            "encoding_format": "float",
+            #"encodingFormat": "float",
             "input": batch,
             "input_type": input_type,
-            "model": "cohere_english_v3",
+            #"model": "cohere_english_v3",
+            "model": "text-embedding-3-small"
         }
 
         response = requests.post(
-            "https://api.doc.usai.gov/api/v1/embeddings",
+            #"https://api.doc.usai.gov/api/v1/embeddings",
+            url=f"{os.getenv('OPENAI_BASE_URL')}/v1/embeddings",
             headers=headers,
             json=payload,
         )
@@ -187,7 +191,7 @@ class Session:
 
         self.embeddings = embeddings
         self.allData = data
-        self.allData['CreatedTime'] = pd.to_datetime(self.allData['CreatedTime']).dt.floor('D')
+        self.allData['CreatedTime'] = pd.to_datetime(self.allData['CreatedTime'], format="ISO8601", utc=True).dt.floor('D')
         self.allData['State'] = self.allData['State'].str.lower()
         self.allData['Message'] = self.allData['Message'].astype("string")
         self.allData['SimilarityScore'] = np.nan
